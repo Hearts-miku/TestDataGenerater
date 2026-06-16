@@ -6,6 +6,7 @@ from functools import lru_cache
 
 from app.core.registry import SchemaRegistry
 from app.db.duckdb_client import DuckDBClient
+from app.services.export_service import ExportService
 from app.services.generate_service import GenerateService
 from app.services.parse_service import ParseService
 from app.services.query_service import QueryService
@@ -32,3 +33,7 @@ def get_generate_service() -> GenerateService:
 
 def get_query_service() -> QueryService:
     return QueryService(db=_get_db())
+
+
+def get_export_service() -> ExportService:
+    return ExportService(registry=_get_registry(), db=_get_db())

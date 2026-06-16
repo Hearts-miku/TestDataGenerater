@@ -1,8 +1,14 @@
 import { Layout, Tabs, Typography } from 'antd'
-import { CodeOutlined, ThunderboltOutlined, DatabaseOutlined } from '@ant-design/icons'
+import {
+  CodeOutlined, ThunderboltOutlined, DatabaseOutlined,
+  ApartmentOutlined, EyeOutlined, DownloadOutlined,
+} from '@ant-design/icons'
 import SchemaEditor from './components/SchemaEditor'
 import GeneratePanel from './components/GeneratePanel'
 import SqlExplorer from './components/SqlExplorer'
+import ErDiagram from './components/ErDiagram'
+import DataPreview from './components/DataPreview'
+import ExportPanel from './components/ExportPanel'
 import 'antd/dist/reset.css'
 
 const { Header, Content } = Layout
@@ -10,29 +16,32 @@ const { Header, Content } = Layout
 const tabs = [
   {
     key: 'schema',
-    label: (
-      <span>
-        <CodeOutlined /> Schema
-      </span>
-    ),
+    label: <span><CodeOutlined /> Schema</span>,
     children: <SchemaEditor />,
   },
   {
+    key: 'er',
+    label: <span><ApartmentOutlined /> ER 图</span>,
+    children: <ErDiagram />,
+  },
+  {
     key: 'generate',
-    label: (
-      <span>
-        <ThunderboltOutlined /> Generate
-      </span>
-    ),
+    label: <span><ThunderboltOutlined /> Generate</span>,
     children: <GeneratePanel />,
   },
   {
+    key: 'preview',
+    label: <span><EyeOutlined /> 数据预览</span>,
+    children: <DataPreview />,
+  },
+  {
+    key: 'export',
+    label: <span><DownloadOutlined /> 导出</span>,
+    children: <ExportPanel />,
+  },
+  {
     key: 'explorer',
-    label: (
-      <span>
-        <DatabaseOutlined /> SQL Explorer
-      </span>
-    ),
+    label: <span><DatabaseOutlined /> SQL Explorer</span>,
     children: <SqlExplorer />,
   },
 ]

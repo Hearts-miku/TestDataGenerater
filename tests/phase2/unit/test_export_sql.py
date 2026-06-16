@@ -88,5 +88,5 @@ class TestSQLExporterValues:
 
     def test_empty_table_skipped(self, exporter):
         sql = exporter.export({"users": [], "products": [{"id": 1}]})
-        assert "INSERT INTO users" not in sql.lower()
-        assert "INSERT INTO products" in sql.lower()
+        assert "insert into users" not in sql.lower()
+        assert "insert into products" in sql.lower()
