@@ -1,0 +1,25 @@
+-- 覆盖所有常见数据类型：验证类型感知生成
+CREATE TABLE type_coverage (
+    id             BIGINT        NOT NULL AUTO_INCREMENT,
+    col_tinyint    TINYINT,
+    col_smallint   SMALLINT,
+    col_int        INT,
+    col_bigint     BIGINT,
+    col_float      FLOAT,
+    col_double     DOUBLE,
+    col_decimal    DECIMAL(18, 4),
+    col_char       CHAR(10),
+    col_varchar    VARCHAR(255),
+    col_text       TEXT,
+    col_boolean    BOOLEAN,
+    col_date       DATE,
+    col_time       TIME,
+    col_datetime   DATETIME,
+    col_timestamp  TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    col_enum       ENUM('A', 'B', 'C', 'D'),
+    col_json       JSON,
+    col_nullable   VARCHAR(50)   NULL,
+    col_not_null   VARCHAR(50)   NOT NULL,
+    col_default    INT           DEFAULT 42,
+    PRIMARY KEY (id)
+);
