@@ -58,6 +58,10 @@ class DuckDBClient:
             if table_name not in tables_by_name:
                 continue
             tbl = tables_by_name[table_name]
+
+            pk_names = [c.name for c in tbl.columns if c.primary_key]
+            composite_pk = len(pk_names) > 1
+
             col_defs = []
             for col in tbl.columns:
                 dtype = _TYPE_MAP.get(col.type_category, "TEXT")
@@ -70,9 +74,15 @@ class DuckDBClient:
                 parts = [f'"{col.name}" {dtype}']
                 if not col.nullable and not col.primary_key:
                     parts.append("NOT NULL")
-                if col.primary_key:
+                # Only inline PRIMARY KEY for single-column PKs; composite PKs
+                # need a table-level constraint to avoid DuckDB rejecting duplicates.
+                if col.primary_key and not composite_pk:
                     parts.append("PRIMARY KEY")
                 col_defs.append(" ".join(parts))
+
+            if composite_pk:
+                pk_clause = ", ".join(f'"{c}"' for c in pk_names)
+                col_defs.append(f"PRIMARY KEY ({pk_clause})")
 
             ddl = f'CREATE TABLE IF NOT EXISTS "{table_name}" ({", ".join(col_defs)})'
             self._conn.execute(ddl)

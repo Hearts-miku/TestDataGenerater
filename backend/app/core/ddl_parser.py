@@ -30,7 +30,9 @@ _SUPPORTED = set(_DIALECT_MAP)
 
 
 def _map_type(raw: str) -> str:
+    # Strip length/precision and MySQL modifiers (UNSIGNED, ZEROFILL, etc.)
     r = raw.upper().split("(")[0].strip()
+    r = re.sub(r"\b(UNSIGNED|ZEROFILL|SIGNED)\b", "", r).strip()
     if r in {"INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "MEDIUMINT",
              "INT2", "INT4", "INT8"}:
         return "integer"
