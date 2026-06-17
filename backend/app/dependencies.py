@@ -37,3 +37,11 @@ def get_query_service() -> QueryService:
 
 def get_export_service() -> ExportService:
     return ExportService(registry=_get_registry(), db=_get_db())
+
+
+def get_db() -> DuckDBClient:
+    return _get_db()
+
+
+def get_registry() -> SchemaRegistry:
+    return _get_registry()

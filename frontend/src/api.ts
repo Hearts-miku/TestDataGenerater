@@ -41,3 +41,7 @@ export async function runSql(sql: string): Promise<QueryResult> {
 export async function getDbTables(): Promise<{ tables: unknown[] }> {
   return get('/db/tables')
 }
+
+export async function resetAll(schema_id?: string): Promise<void> {
+  await post('/reset', { schema_id: schema_id ?? null })
+}

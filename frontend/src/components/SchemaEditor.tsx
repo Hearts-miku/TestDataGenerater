@@ -1,9 +1,9 @@
 import { useRef, useState } from 'react'
-import { Button, Select, Alert, Typography, Space, Tag, Tooltip, message } from 'antd'
-import { CodeOutlined, TableOutlined, UploadOutlined } from '@ant-design/icons'
+import { Button, Select, Alert, Typography, Space, Tag, Tooltip, Popconfirm, message } from 'antd'
+import { CodeOutlined, TableOutlined, UploadOutlined, DeleteOutlined } from '@ant-design/icons'
 import Editor from '@monaco-editor/react'
 import { useAppStore } from '../store'
-import { parseDdl } from '../api'
+import { parseDdl, resetAll } from '../api'
 
 const DIALECTS = ['mysql', 'postgresql', 'sqlite', 'tsql', 'oracle', 'bigquery']
 
@@ -17,6 +17,7 @@ export default function SchemaEditor() {
   } = useAppStore()
 
   const [loading, setLoading] = useState(false)
+  const [clearing, setClearing] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   async function handleParse() {
@@ -57,6 +58,19 @@ export default function SchemaEditor() {
     e.target.value = ''
   }
 
+  async function handleClear() {
+    setClearing(true)
+    try {
+      await resetAll(parsedSchema?.schema_id)
+      useAppStore.getState().resetAll()
+      message.success('数据已清空')
+    } catch {
+      message.error('清空失败，请重试')
+    } finally {
+      setClearing(false)
+    }
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* ── Toolbar ── */}
@@ -90,6 +104,24 @@ export default function SchemaEditor() {
             导入 .sql
           </Button>
         </Tooltip>
+
+        <Popconfirm
+          title="清空所有数据"
+          description="将清除 DDL、解析结果、生成数据及 DuckDB 表，操作不可撤销。"
+          onConfirm={handleClear}
+          okText="确认清空"
+          cancelText="取消"
+          okButtonProps={{ danger: true }}
+        >
+          <Button
+            size="small"
+            danger
+            icon={<DeleteOutlined />}
+            loading={clearing}
+          >
+            清空
+          </Button>
+        </Popconfirm>
 
         <Button
           type="primary"

@@ -78,6 +78,7 @@ interface AppState {
   setSqlQuery: (q: string) => void
   setQueryResult: (r: QueryResult | null) => void
   setQueryError: (e: string | null) => void
+  resetAll: () => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -108,4 +109,14 @@ export const useAppStore = create<AppState>((set) => ({
   setSqlQuery: (q) => set({ sqlQuery: q }),
   setQueryResult: (r) => set({ queryResult: r }),
   setQueryError: (e) => set({ queryError: e }),
+  resetAll: () =>
+    set({
+      ddlSource: '',
+      parsedSchema: null,
+      parseError: null,
+      rowCounts: {},
+      generationResult: null,
+      queryResult: null,
+      queryError: null,
+    }),
 }))
