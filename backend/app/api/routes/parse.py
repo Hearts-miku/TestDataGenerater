@@ -62,8 +62,12 @@ async def parse_schema(
             schema = svc.parse_cypher(req.source)
         else:
             raise HTTPException(400, f"Unknown schema type: {req.type!r}")
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(422, str(exc))
+    except Exception as exc:
+        raise HTTPException(500, f"Parse error: {exc}")
 
     tables_out = [
         TableOut(

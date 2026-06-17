@@ -8,8 +8,14 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.detail ?? `HTTP ${res.status}`)
+  const text = await res.text()
+  let data: unknown
+  try {
+    data = JSON.parse(text)
+  } catch {
+    throw new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`)
+  }
+  if (!res.ok) throw new Error((data as { detail?: string }).detail ?? `HTTP ${res.status}`)
   return data as T
 }
 
