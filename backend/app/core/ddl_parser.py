@@ -29,6 +29,67 @@ _DIALECT_MAP = {
 _SUPPORTED = set(_DIALECT_MAP)
 
 
+def _preprocess_doris(sql: str) -> str:
+    """Strip Apache Doris / StarRocks table options that sqlglot cannot parse.
+
+    Doris CREATE TABLE has extra clauses after the column-definition block:
+      DUPLICATE KEY / AGGREGATE KEY / UNIQUE KEY (model keys, not PK)
+      PARTITION BY RANGE(col) (PARTITION p VALUES [(...), (...)), ...)
+      DISTRIBUTED BY HASH(col) BUCKETS N
+      PROPERTIES (...)
+    These use syntax that confuses sqlglot and cause the whole statement to
+    fall back to a Command node (no columns extracted).
+
+    Strategy: for each CREATE TABLE, locate the *outer* closing ) using
+    paren-depth tracking (so nested parens in types/strings are safe), then
+    discard everything between that ) and the trailing ; — keeping only the
+    column-definition block.
+    """
+    out: list[str] = []
+    pos = 0
+
+    for m in re.finditer(r'CREATE\s+TABLE\s+', sql, re.IGNORECASE):
+        out.append(sql[pos:m.start()])
+        pos = m.start()
+
+        open_paren = sql.find('(', m.end())
+        if open_paren == -1:
+            break
+
+        depth = 0
+        i = open_paren
+        close_paren = open_paren
+        while i < len(sql):
+            ch = sql[i]
+            if ch == '(':
+                depth += 1
+            elif ch == ')':
+                depth -= 1
+                if depth == 0:
+                    close_paren = i
+                    break
+            elif ch in ("'", '"', '`'):
+                quote = ch
+                i += 1
+                while i < len(sql):
+                    if sql[i] == '\\':
+                        i += 1
+                    elif sql[i] == quote:
+                        break
+                    i += 1
+            i += 1
+
+        # Keep everything up to and including the column-list closing paren
+        out.append(sql[pos:close_paren + 1])
+        # Skip the Doris-specific tail (up to and including the next ;)
+        next_semi = sql.find(';', close_paren)
+        pos = next_semi + 1 if next_semi != -1 else len(sql)
+        out.append(';')
+
+    out.append(sql[pos:])
+    return ''.join(out)
+
+
 def _map_type(raw: str) -> str:
     # Strip length/precision and MySQL modifiers (UNSIGNED, ZEROFILL, etc.)
     r = raw.upper().split("(")[0].strip()
@@ -99,6 +160,8 @@ class DDLParser:
 
         glot_dialect = _DIALECT_MAP[dialect]
 
+        source = _preprocess_doris(source)
+
         try:
             statements = sqlglot.parse(
                 source, dialect=glot_dialect, error_level=sqlglot.ErrorLevel.WARN
@@ -168,10 +231,13 @@ class DDLParser:
                                 ref_column=ref_col,
                             ))
 
-                elif isinstance(expr, exp.Unique):
-                    cols = [c.name for c in expr.expressions]
-                    if cols:
-                        unique_constraints.append(cols)
+                elif isinstance(expr, exp.UniqueColumnConstraint):
+                    # Table-level UNIQUE KEY — extract column names via .args['this']
+                    schema_node = expr.args.get("this")
+                    if schema_node and hasattr(schema_node, "expressions"):
+                        cols = [c.name for c in schema_node.expressions if hasattr(c, "name")]
+                        if cols:
+                            unique_constraints.append(cols)
 
             tables.append(TableDef(
                 name=table_name,
