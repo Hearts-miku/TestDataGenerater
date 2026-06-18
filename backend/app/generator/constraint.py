@@ -1,19 +1,106 @@
-"""Constraint solver — FK pools, UNIQUE dedup, NOT NULL fill, topological order."""
+"""Constraint solver — FK pools, UNIQUE dedup, NOT NULL fill, topological order.
+
+Beyond classic single-column PK→FK pools, this solver also tracks **shared key
+pools** keyed by (table, column). This is what closes joins across Doris/OLAP
+tables that have no explicit FOREIGN KEY: a curated set of ``Relation`` edges
+(see ``app.core.relation_parser``) tells us that ``child.col`` must reference an
+existing ``parent.col`` value. The parent (authority) column registers its
+generated values; the child samples from that pool.
+"""
 
 from __future__ import annotations
 
 import random
 from collections import defaultdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.core.schema_model import RelationalSchemaModel, TableDef
 
+if TYPE_CHECKING:
+    from app.core.relation_parser import Relation
+
 
 class ConstraintSolver:
-    def __init__(self, schema: RelationalSchemaModel) -> None:
+    def __init__(
+        self,
+        schema: RelationalSchemaModel,
+        relations: "list[Relation] | None" = None,
+    ) -> None:
         self._schema = schema
-        # pk_pool[table_name] = list of pk values
+        # pk_pool[table_name] = list of pk values (legacy single-table pool)
         self._pk_pool: dict[str, list[Any]] = defaultdict(list)
+        # col_pool[(table, column)] = list of generated values for shared-key joins
+        self._col_pool: dict[tuple[str, str], list[Any]] = defaultdict(list)
+
+        # Build relation lookups: which child columns reference which authority column.
+        # If no relations are given explicitly, derive them from the schema's
+        # foreign keys (which include any injected from the curated schema graph).
+        if relations is None:
+            from app.core.relation_parser import Relation as _Rel
+            relations = [
+                _Rel(
+                    child_table=t.name,
+                    child_col=fk.column,
+                    parent_table=fk.ref_table,
+                    parent_col=fk.ref_column,
+                )
+                for t in schema.tables
+                for fk in t.foreign_keys
+            ]
+        self._relations: list[Relation] = list(relations)
+        raw_target: dict[tuple[str, str], tuple[str, str]] = {}
+        for r in self._relations:
+            # First relation wins if a child column appears in several edges.
+            raw_target.setdefault(
+                (r.child_table, r.child_col), (r.parent_table, r.parent_col)
+            )
+
+        # Resolve each FK target transitively to its ROOT authority. When
+        # cust_no → other.cust_no → ... → C_PT_INDV_CUST_BASIC.party_id, every
+        # customer reference ends up sampling from the same root pool, so all
+        # joins close instead of fragmenting across intermediate tables.
+        self._fk_target: dict[tuple[str, str], tuple[str, str]] = {}
+        for child in raw_target:
+            self._fk_target[child] = self._resolve_root(child, raw_target)
+
+        self._authority_cols: set[tuple[str, str]] = set(self._fk_target.values())
+
+    @staticmethod
+    def _resolve_root(
+        child: tuple[str, str],
+        raw_target: dict[tuple[str, str], tuple[str, str]],
+    ) -> tuple[str, str]:
+        """Follow the FK chain to the ultimate authority, guarding against cycles."""
+        seen = {child}
+        target = raw_target[child]
+        while target in raw_target and target not in seen:
+            seen.add(target)
+            target = raw_target[target]
+        return target
+
+    # ── Shared key pools (relation-driven joins) ──────────────────────────────
+
+    def fk_target(self, table: str, column: str) -> tuple[str, str] | None:
+        """If (table, column) references an authority column, return (parent_table, parent_col)."""
+        return self._fk_target.get((table, column))
+
+    def is_authority(self, table: str, column: str) -> bool:
+        """True if (table, column) is referenced by at least one child column."""
+        return (table, column) in self._authority_cols
+
+    def register_values(self, table: str, column: str, values: list[Any]) -> None:
+        """Record an authority column's generated values for child FK sampling."""
+        self._col_pool[(table, column)].extend(v for v in values if v is not None)
+
+    def sample_values(self, table: str, column: str, n: int = 1) -> list[Any]:
+        """Sample n values from a (table, column) pool. Returns [None]*n if empty."""
+        pool = self._col_pool.get((table, column))
+        if not pool:
+            return [None] * n
+        return [random.choice(pool) for _ in range(n)]
+
+    def pool_size(self, table: str, column: str) -> int:
+        return len(self._col_pool.get((table, column), []))
 
     # ── Topological sort ──────────────────────────────────────────────────────
 

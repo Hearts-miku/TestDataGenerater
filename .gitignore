@@ -14,3 +14,6 @@ frontend/dist/
 .env
 *.log
 .DS_Store
+
+# Generated output (test data produced by run_e2e_test.py)
+output/

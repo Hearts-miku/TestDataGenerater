@@ -24,6 +24,7 @@ class ColumnDef(BaseModel):
     precision: Optional[int] = None    # DECIMAL(p,s) → p
     scale: Optional[int] = None        # DECIMAL(p,s) → s
     enum_values: Optional[list[str]] = None
+    comment: str = ""                  # COMMENT "..." — key semantic hint for AI/rule inference
 
 
 # Alias for backward-compat
@@ -68,21 +69,32 @@ class RelationalSchemaModel(BaseModel):
     generation_order: list[GenerationStep] = Field(default_factory=list)
     schema_type: Literal["relational", "graph"] = "relational"
 
+    # Custom per-column generation rules ("table.column" -> spec dict).
+    # Sourced from natural-language rules; applied with highest priority at generation.
+    field_specs: dict[str, dict] = Field(default_factory=dict)
+
     # graph-specific (Phase 3)
-    nodes: list["NodeDef"] = Field(default_factory=list)
-    relationships: list["RelationshipDef"] = Field(default_factory=list)
+    nodes: list[NodeDef] = Field(default_factory=list)
+    relationships: list[RelationshipDef] = Field(default_factory=list)
 
     @property
     def tables_by_name(self) -> dict[str, TableDef]:
         return {t.name: t for t in self.tables}
 
+    def to_graph_schema(self) -> GraphSchemaModel:
+        return GraphSchemaModel(nodes=self.nodes, relationships=self.relationships)
 
-# ── Graph schema (Phase 3 stubs) ──────────────────────────────────────────────
+
+# ── Graph schema (Phase 3) ────────────────────────────────────────────────────
+
+# PropertyDef is a lightweight alias — same shape as ColumnDef but signals graph context
+PropertyDef = ColumnDef
+
 
 class NodeDef(BaseModel):
     label: str
     properties: list[ColumnDef] = Field(default_factory=list)
-    unique_constraints: list[str] = Field(default_factory=list)
+    unique_properties: list[str] = Field(default_factory=list)
 
     @property
     def columns(self) -> list[ColumnDef]:
@@ -94,3 +106,13 @@ class RelationshipDef(BaseModel):
     from_label: str
     to_label: str
     properties: list[ColumnDef] = Field(default_factory=list)
+
+
+# Short alias used in graph-specific code
+RelDef = RelationshipDef
+
+
+class GraphSchemaModel(BaseModel):
+    """Standalone graph schema — used by KuzuClient and GraphConstraintSolver."""
+    nodes: list[NodeDef] = Field(default_factory=list)
+    relationships: list[RelationshipDef] = Field(default_factory=list)

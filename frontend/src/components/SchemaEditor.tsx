@@ -1,9 +1,10 @@
-import { useRef, useState } from 'react'
-import { Button, Select, Alert, Typography, Space, Tag, Tooltip, Popconfirm, message } from 'antd'
-import { CodeOutlined, TableOutlined, UploadOutlined, DeleteOutlined } from '@ant-design/icons'
+import { useState } from 'react'
+import { Button, Select, Alert, Typography, Space, Tag, Popconfirm, message } from 'antd'
+import { CodeOutlined, TableOutlined, DeleteOutlined } from '@ant-design/icons'
 import Editor from '@monaco-editor/react'
 import { useAppStore } from '../store'
 import { parseDdl, resetAll } from '../api'
+import MultiFileImport from './MultiFileImport'
 
 const DIALECTS = ['mysql', 'postgresql', 'sqlite', 'tsql', 'oracle', 'bigquery']
 
@@ -18,7 +19,6 @@ export default function SchemaEditor() {
 
   const [loading, setLoading] = useState(false)
   const [clearing, setClearing] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
 
   async function handleParse() {
     setLoading(true)
@@ -35,27 +35,6 @@ export default function SchemaEditor() {
     } finally {
       setLoading(false)
     }
-  }
-
-  function handleFileImport(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    if (file.size > 2 * 1024 * 1024) {
-      message.error('文件过大，请上传 2 MB 以内的 .sql 文件')
-      return
-    }
-    const reader = new FileReader()
-    reader.onload = (ev) => {
-      const text = ev.target?.result as string
-      setDdlSource(text)
-      setParsedSchema(null)
-      setParseError(null)
-      message.success(`已导入 ${file.name}`)
-    }
-    reader.onerror = () => message.error('文件读取失败')
-    reader.readAsText(file, 'utf-8')
-    // Reset so the same file can be re-imported
-    e.target.value = ''
   }
 
   async function handleClear() {
@@ -87,23 +66,17 @@ export default function SchemaEditor() {
           style={{ width: 130 }}
         />
 
-        {/* Hidden file input */}
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".sql,.txt"
-          style={{ display: 'none' }}
-          onChange={handleFileImport}
+        <MultiFileImport
+          accept=".sql,.txt,.ddl"
+          commentPrefix="--"
+          currentValue={ddlSource}
+          onChange={setDdlSource}
+          onImported={() => {
+            setParsedSchema(null)
+            setParseError(null)
+          }}
+          buttonLabel="导入 .sql"
         />
-        <Tooltip title="导入 .sql 文件（替换当前内容）">
-          <Button
-            size="small"
-            icon={<UploadOutlined />}
-            onClick={() => fileRef.current?.click()}
-          >
-            导入 .sql
-          </Button>
-        </Tooltip>
 
         <Popconfirm
           title="清空所有数据"

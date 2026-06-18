@@ -14,18 +14,20 @@ router = APIRouter()
 
 class ExportRequest(BaseModel):
     schema_id: str
-    format: Literal["sql", "csv", "json"]
+    format: Literal["sql", "csv", "json", "xlsx"]
 
 
 _MEDIA: dict[str, str] = {
     "sql": "text/plain",
     "csv": "application/zip",
     "json": "application/json",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
 _FILENAME: dict[str, str] = {
     "sql": "export.sql",
     "csv": "export.zip",
     "json": "export.json",
+    "xlsx": "export.xlsx",
 }
 
 

@@ -29,11 +29,18 @@ _DIALECT_MAP = {
 _SUPPORTED = set(_DIALECT_MAP)
 
 
-def _preprocess_doris(sql: str) -> str:
-    """Strip Apache Doris / StarRocks table options that sqlglot cannot parse.
+# Doris model-key clause: DUPLICATE/UNIQUE/AGGREGATE KEY(col, ...)
+_DORIS_KEY_RE = re.compile(
+    r'(?:DUPLICATE|UNIQUE|AGGREGATE)\s+KEY\s*\(([^)]*)\)', re.IGNORECASE
+)
+
+
+def _preprocess_doris(sql: str) -> tuple[str, dict[str, list[str]]]:
+    """Strip Apache Doris / StarRocks table options that sqlglot cannot parse,
+    and extract each table's model-key columns for use as a primary key.
 
     Doris CREATE TABLE has extra clauses after the column-definition block:
-      DUPLICATE KEY / AGGREGATE KEY / UNIQUE KEY (model keys, not PK)
+      DUPLICATE KEY / AGGREGATE KEY / UNIQUE KEY (model keys, not a real PK)
       PARTITION BY RANGE(col) (PARTITION p VALUES [(...), (...)), ...)
       DISTRIBUTED BY HASH(col) BUCKETS N
       PROPERTIES (...)
@@ -43,9 +50,13 @@ def _preprocess_doris(sql: str) -> str:
     Strategy: for each CREATE TABLE, locate the *outer* closing ) using
     paren-depth tracking (so nested parens in types/strings are safe), then
     discard everything between that ) and the trailing ; — keeping only the
-    column-definition block.
+    column-definition block. Before discarding, pull the model-key columns out
+    of that tail so callers can surface them as the table's primary key.
+
+    Returns the cleaned SQL plus ``{table_name: [key_col, ...]}``.
     """
     out: list[str] = []
+    keys: dict[str, list[str]] = {}
     pos = 0
 
     for m in re.finditer(r'CREATE\s+TABLE\s+', sql, re.IGNORECASE):
@@ -55,6 +66,10 @@ def _preprocess_doris(sql: str) -> str:
         open_paren = sql.find('(', m.end())
         if open_paren == -1:
             break
+
+        # Table name sits between "CREATE TABLE " and the opening paren.
+        name_part = sql[m.end():open_paren].strip()
+        tbl_name = name_part.split('.')[-1].strip().strip('`').strip()
 
         depth = 0
         i = open_paren
@@ -83,11 +98,20 @@ def _preprocess_doris(sql: str) -> str:
         out.append(sql[pos:close_paren + 1])
         # Skip the Doris-specific tail (up to and including the next ;)
         next_semi = sql.find(';', close_paren)
+        tail = sql[close_paren + 1:next_semi if next_semi != -1 else len(sql)]
+
+        km = _DORIS_KEY_RE.search(tail)
+        if km and tbl_name:
+            cols = [c.strip().strip('`').strip() for c in km.group(1).split(',')]
+            cols = [c for c in cols if c]
+            if cols:
+                keys[tbl_name] = cols
+
         pos = next_semi + 1 if next_semi != -1 else len(sql)
         out.append(';')
 
     out.append(sql[pos:])
-    return ''.join(out)
+    return ''.join(out), keys
 
 
 def _map_type(raw: str) -> str:
@@ -101,10 +125,11 @@ def _map_type(raw: str) -> str:
         return "integer"
     if r in {"FLOAT", "REAL", "DOUBLE", "DOUBLE PRECISION", "FLOAT4", "FLOAT8"}:
         return "float"
-    if r in {"DECIMAL", "NUMERIC", "MONEY", "SMALLMONEY"}:
+    if r in {"DECIMAL", "NUMERIC", "MONEY", "SMALLMONEY", "NUMBER"}:
         return "decimal"
     if r in {"CHAR", "VARCHAR", "NCHAR", "NVARCHAR", "CHARACTER VARYING",
-             "CHARACTER", "BPCHAR", "CITEXT", "STRING"}:
+             "CHARACTER", "BPCHAR", "CITEXT", "STRING",
+             "VARCHAR2", "NVARCHAR2"}:
         return "string"
     if r in {"TEXT", "TINYTEXT", "MEDIUMTEXT", "LONGTEXT", "CLOB", "NTEXT"}:
         return "text"
@@ -160,7 +185,7 @@ class DDLParser:
 
         glot_dialect = _DIALECT_MAP[dialect]
 
-        source = _preprocess_doris(source)
+        source, doris_keys = _preprocess_doris(source)
 
         try:
             statements = sqlglot.parse(
@@ -239,6 +264,39 @@ class DDLParser:
                         if cols:
                             unique_constraints.append(cols)
 
+                elif isinstance(expr, exp.Constraint):
+                    # Named constraint: CONSTRAINT name PRIMARY KEY (...) / UNIQUE (...)
+                    for sub in expr.expressions:
+                        if isinstance(sub, exp.PrimaryKey):
+                            named_pk = [c.name for c in sub.expressions if hasattr(c, "name")]
+                            if named_pk:
+                                pk_cols = named_pk
+                                for col in columns:
+                                    if col.name in pk_cols:
+                                        col.primary_key = True
+                        elif isinstance(sub, exp.UniqueColumnConstraint):
+                            # Named UNIQUE — columns may be in sub.args["this"] or sub.expressions
+                            ucols: list[str] = []
+                            inner = sub.args.get("this")
+                            if inner and hasattr(inner, "expressions"):
+                                ucols = [c.name for c in inner.expressions if hasattr(c, "name")]
+                            elif hasattr(sub, "expressions"):
+                                ucols = [c.name for c in sub.expressions if hasattr(c, "name")]
+                            if ucols:
+                                unique_constraints.append(ucols)
+                                for col in columns:
+                                    if col.name in ucols:
+                                        col.unique = True
+
+            # Doris/OLAP tables have no real PRIMARY KEY — fall back to the
+            # DUPLICATE/UNIQUE/AGGREGATE KEY columns so the UI shows a key.
+            # These are *sort* keys (not guaranteed unique), so we record them
+            # on the table for display/metadata but do NOT set col.primary_key
+            # (that would wrongly force per-column uniqueness on e.g. etl_dt).
+            if not pk_cols and table_name in doris_keys:
+                col_names = {c.name for c in columns}
+                pk_cols = [c for c in doris_keys[table_name] if c in col_names]
+
             tables.append(TableDef(
                 name=table_name,
                 columns=columns,
@@ -280,6 +338,7 @@ class DDLParser:
         length: Optional[int] = None
         precision: Optional[int] = None
         scale: Optional[int] = None
+        comment = ""
 
         if type_cat == "string":
             length = _extract_length(raw_type)
@@ -300,13 +359,16 @@ class DDLParser:
             elif isinstance(ckind, exp.PrimaryKeyColumnConstraint):
                 primary_key = True
                 nullable = False
-            elif isinstance(ckind, exp.AutoIncrementColumnConstraint):
+            elif isinstance(ckind, (exp.AutoIncrementColumnConstraint,
+                                    exp.GeneratedAsIdentityColumnConstraint)):
                 auto_increment = True
             elif isinstance(ckind, exp.UniqueColumnConstraint):
                 unique = True
             elif isinstance(ckind, exp.DefaultColumnConstraint):
                 raw_default = ckind.this.sql(dialect=dialect) if ckind.this else None
                 default = _unquote_default(raw_default) if raw_default else None
+            elif isinstance(ckind, exp.CommentColumnConstraint):
+                comment = getattr(ckind.this, "name", "") or ""
 
         return ColumnDef(
             name=name,
@@ -321,6 +383,7 @@ class DDLParser:
             precision=precision,
             scale=scale,
             enum_values=enum_values,
+            comment=comment,
         )
 
 

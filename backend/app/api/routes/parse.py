@@ -14,6 +14,7 @@ class ParseRequest(BaseModel):
     source: str
     type: str           # required — "ddl" | "cypher"
     dialect: str = "mysql"
+    relation_graph: str | None = None   # optional Cypher schema graph for FK injection
 
 
 class ColumnOut(BaseModel):
@@ -57,7 +58,7 @@ async def parse_schema(
 ):
     try:
         if req.type == "ddl":
-            schema = svc.parse_ddl(req.source, dialect=req.dialect)
+            schema = svc.parse_ddl(req.source, dialect=req.dialect, relation_graph=req.relation_graph)
         elif req.type == "cypher":
             schema = svc.parse_cypher(req.source)
         else:
@@ -94,10 +95,36 @@ async def parse_schema(
         for t in schema.tables  # schema.tables is a list
     ]
 
+    nodes_out = [
+        {
+            "label": n.label,
+            "properties": [
+                {"name": p.name, "type_category": p.type_category}
+                for p in n.properties
+            ],
+            "unique_properties": n.unique_properties,
+        }
+        for n in schema.nodes
+    ]
+    rels_out = [
+        {
+            "type": r.type,
+            "from_label": r.from_label,
+            "to_label": r.to_label,
+            "properties": [
+                {"name": p.name, "type_category": p.type_category}
+                for p in r.properties
+            ],
+        }
+        for r in schema.relationships
+    ]
+
     return ParseResponse(
         schema_id=schema.id,
         schema_type=schema.schema_type,
         dialect=schema.dialect,
         tables=tables_out,
+        nodes=nodes_out,
+        relationships=rels_out,
         generation_order=schema.generation_order,
     )

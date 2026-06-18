@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import db_sql, export, generate, health, parse, reset
+from app.api.routes import ai_config, db_sql, export, generate, graph, health, mysql_write, parse, relations, reset, rules, ws_generate
 
 app = FastAPI(title="DataForge", version="0.1.0")
 
@@ -22,10 +22,16 @@ app.add_middleware(
 # API routes
 app.include_router(health.router, prefix="/api")
 app.include_router(parse.router, prefix="/api")
+app.include_router(relations.router, prefix="/api")
+app.include_router(rules.router, prefix="/api")
 app.include_router(generate.router, prefix="/api")
 app.include_router(db_sql.router, prefix="/api")
 app.include_router(export.router, prefix="/api")
 app.include_router(reset.router, prefix="/api")
+app.include_router(graph.router, prefix="/api")
+app.include_router(mysql_write.router, prefix="/api")
+app.include_router(ai_config.router, prefix="/api")
+app.include_router(ws_generate.router)
 
 # Serve frontend (production mode — build first with `pnpm build`)
 _frontend = Path(__file__).parent.parent / "frontend" / "dist"

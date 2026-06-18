@@ -6,6 +6,7 @@ from functools import lru_cache
 
 from app.core.registry import SchemaRegistry
 from app.db.duckdb_client import DuckDBClient
+from app.db.kuzu_client import KuzuClient
 from app.services.export_service import ExportService
 from app.services.generate_service import GenerateService
 from app.services.parse_service import ParseService
@@ -23,12 +24,21 @@ def _get_registry() -> SchemaRegistry:
     return SchemaRegistry()
 
 
+@lru_cache(maxsize=1)
+def _get_graph_db() -> KuzuClient:
+    return KuzuClient(path=":memory:")
+
+
 def get_parse_service() -> ParseService:
     return ParseService(registry=_get_registry(), db=_get_db())
 
 
 def get_generate_service() -> GenerateService:
-    return GenerateService(registry=_get_registry(), db=_get_db())
+    return GenerateService(registry=_get_registry(), db=_get_db(), graph_db=_get_graph_db())
+
+
+def get_graph_db() -> KuzuClient:
+    return _get_graph_db()
 
 
 def get_query_service() -> QueryService:

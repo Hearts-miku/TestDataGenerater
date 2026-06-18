@@ -13,6 +13,7 @@ class GenerateRequest(BaseModel):
     schema_id: str
     row_counts: dict[str, int]
     ai_enabled: bool = False
+    llm_config: dict | None = None   # {base_url, api_key, model} — overrides settings
 
 
 @router.post("/generate")
@@ -25,6 +26,7 @@ async def generate_data(
             schema_id=req.schema_id,
             row_counts=req.row_counts,
             ai_enabled=req.ai_enabled,
+            llm_config=req.llm_config,
         )
     except KeyError as exc:
         raise HTTPException(404, str(exc))

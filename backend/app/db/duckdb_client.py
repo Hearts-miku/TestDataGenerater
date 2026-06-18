@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import csv
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +21,7 @@ _WRITE_PATTERN = re.compile(
 _TYPE_MAP: dict[str, str] = {
     "integer":  "BIGINT",
     "float":    "DOUBLE",
-    "decimal":  "DECIMAL",
+    "decimal":  "DOUBLE",
     "string":   "VARCHAR",
     "text":     "TEXT",
     "boolean":  "BOOLEAN",
@@ -64,27 +67,13 @@ class DuckDBClient:
 
             col_defs = []
             for col in tbl.columns:
+                # Use bare types (no precision/length) so the CSV reader never hits
+                # a DECIMAL(p,s) or VARCHAR(n) overflow during bulk load.
+                # DuckDB's bare DECIMAL/VARCHAR/TEXT accept any value.
                 dtype = _TYPE_MAP.get(col.type_category, "TEXT")
-                if col.type_category == "decimal" and col.precision:
-                    scale = col.scale or 2
-                    dtype = f"DECIMAL({col.precision},{scale})"
-                elif col.type_category == "string" and col.length:
-                    dtype = f"VARCHAR({col.length})"
+                col_defs.append(f'"{col.name}" {dtype}')
 
-                parts = [f'"{col.name}" {dtype}']
-                if not col.nullable and not col.primary_key:
-                    parts.append("NOT NULL")
-                # Only inline PRIMARY KEY for single-column PKs; composite PKs
-                # need a table-level constraint to avoid DuckDB rejecting duplicates.
-                if col.primary_key and not composite_pk:
-                    parts.append("PRIMARY KEY")
-                col_defs.append(" ".join(parts))
-
-            if composite_pk:
-                pk_clause = ", ".join(f'"{c}"' for c in pk_names)
-                col_defs.append(f"PRIMARY KEY ({pk_clause})")
-
-            ddl = f'CREATE TABLE IF NOT EXISTS "{table_name}" ({", ".join(col_defs)})'
+            ddl = f'CREATE OR REPLACE TABLE "{table_name}" ({", ".join(col_defs)})'
             self._conn.execute(ddl)
 
     def truncate_table(self, table_name: str) -> None:
@@ -107,16 +96,40 @@ class DuckDBClient:
 
     # ── Data operations ────────────────────────────────────────────────────
 
+    @staticmethod
+    def _csv_val(v: Any) -> Any:
+        """Sanitize values before writing to the temp CSV:
+        - Large integer-valued floats → int (prevents scientific notation like 7.2e+19)
+        - Strings with newlines → replace with space (prevents multi-line CSV rows that
+          confuse DuckDB's read_csv_auto even when properly quoted)
+        """
+        if isinstance(v, float) and v.is_integer() and (v >= 1e15 or v <= -1e15):
+            return int(v)
+        if isinstance(v, str) and ('\n' in v or '\r' in v):
+            return v.replace('\r\n', ' ').replace('\r', ' ').replace('\n', ' ')
+        return v
+
     def insert_rows(self, table: str, rows: list[dict[str, Any]]) -> int:
         if not rows:
             return 0
         cols = list(rows[0].keys())
-        placeholders = ", ".join(["?"] * len(cols))
         col_str = ", ".join(f'"{c}"' for c in cols)
-        values = [[row.get(c) for c in cols] for row in rows]
-        self._conn.executemany(
-            f'INSERT INTO "{table}" ({col_str}) VALUES ({placeholders})', values
-        )
+        # Write to a temp CSV file, then use DuckDB's vectorized CSV reader.
+        # This is orders of magnitude faster than executemany row by row.
+        fd, tmp_path = tempfile.mkstemp(suffix=".csv")
+        try:
+            with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f, quoting=csv.QUOTE_MINIMAL)
+                writer.writerow(cols)
+                for row in rows:
+                    writer.writerow([self._csv_val(row.get(c)) for c in cols])
+            safe = tmp_path.replace("\\", "/")
+            self._conn.execute(
+                f"INSERT INTO \"{table}\" ({col_str}) "
+                f"SELECT * FROM read_csv_auto('{safe}', header=true, all_varchar=true)"
+            )
+        finally:
+            os.unlink(tmp_path)
         return len(rows)
 
     # ── Query ──────────────────────────────────────────────────────────────

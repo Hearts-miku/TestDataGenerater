@@ -9,8 +9,9 @@ from app.db.duckdb_client import DuckDBClient
 from app.exporter.csv_exp import CSVExporter
 from app.exporter.json_exp import JSONExporter
 from app.exporter.sql import SQLExporter
+from app.exporter.xlsx_exp import XLSXExporter
 
-_EXPORTERS = {"sql": SQLExporter, "csv": CSVExporter, "json": JSONExporter}
+_EXPORTERS = {"sql": SQLExporter, "csv": CSVExporter, "json": JSONExporter, "xlsx": XLSXExporter}
 
 
 class ExportService:
