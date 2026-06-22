@@ -15,5 +15,9 @@ frontend/dist/
 *.log
 .DS_Store
 
+# IDE
+.idea/
+.vscode/
+
 # Generated output (test data produced by run_e2e_test.py)
 output/
